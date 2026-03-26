@@ -139,7 +139,7 @@ jobs:
 
       - name: Package VSIX
         run: |
-          npx @vscode/vsce package --no-dependencies --target ${{ matrix.platform }} -o "vscode-scrcpy-${{ matrix.platform }}.vsix"
+          npx @vscode/vsce package --no-dependencies --target ${{ matrix.platform }} -o "scrhub-${{ matrix.platform }}.vsix"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -176,9 +176,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Vscode-scrcpy ${{ github.ref_name }}"
+          name: "ScrHub ${{ github.ref_name }}"
           body: |
-            ## Vscode-scrcpy ${{ github.ref_name }}
+            ## ScrHub ${{ github.ref_name }}
 
             VS Code extension for controlling Android devices. Bundles:
             - **scrhub server**: ${{ steps.versions.outputs.scrhub }}
@@ -187,16 +187,16 @@ jobs:
 
             ### Install
             ```bash
-            code --install-extension vscode-scrcpy-linux-x64.vsix
+            code --install-extension scrhub-linux-x64.vsix
             # or for Windows
-            code --install-extension vscode-scrcpy-win32-x64.vsix
+            code --install-extension scrhub-win32-x64.vsix
             ```
 
             ### Platforms
             | Platform | File |
             |----------|------|
-            | Linux x64 | `vscode-scrcpy-linux-x64.vsix` |
-            | Windows x64 | `vscode-scrcpy-win32-x64.vsix` |
+            | Linux x64 | `scrhub-linux-x64.vsix` |
+            | Windows x64 | `scrhub-win32-x64.vsix` |
           files: |
             artifacts/*
           draft: false

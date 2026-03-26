@@ -36,14 +36,14 @@ This architecture works seamlessly over **Remote-SSH** — the server and ADB ru
 
 ### VS Code Marketplace
 
-Search for **"Web Scrcpy"** in the Extensions view, or install from the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=scrcpy-vscode.vscode-scrcpy).
+Search for **"ScrHub"** in the Extensions view, or install from the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=scrcpy-vscode.scrhub).
 
 ### GitHub Releases
 
 Download a `.vsix` file for your platform from [Releases](https://github.com/Fubuki233/Vscode-scrcpy/releases), then:
 
 ```
-code --install-extension vscode-scrcpy-<platform>.vsix
+code --install-extension scrhub-<platform>.vsix
 ```
 
 ## Requirements
