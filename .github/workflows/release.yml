@@ -101,8 +101,15 @@ jobs:
           case "${{ matrix.platform }}" in
             linux-x64)
               mkdir -p /tmp/scrhub-extracted
-              tar xzf /tmp/scrhub-archive --no-same-owner -C /tmp/scrhub-extracted
-              cp /tmp/scrhub-extracted/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
+              tar xzf /tmp/scrhub-archive --no-same-owner --no-same-permissions -C /tmp/scrhub-extracted || true
+              # Find the binary (may be at root or nested)
+              FOUND=$(find /tmp/scrhub-extracted -name "${{ matrix.scrhub_bin }}" -type f | head -1)
+              if [ -z "$FOUND" ]; then
+                echo "ERROR: ${{ matrix.scrhub_bin }} not found in archive"
+                ls -laR /tmp/scrhub-extracted
+                exit 1
+              fi
+              cp "$FOUND" "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
               chmod +x "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
               ;;
             win32-x64)
