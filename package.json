@@ -1,0 +1,149 @@
+{
+  "name": "vscode-scrcpy",
+  "displayName": "Web Scrcpy - Android Remote Control",
+  "description": "Control Android devices directly in VS Code via web-scrcpy server",
+  "version": "0.1.0",
+  "publisher": "web-scrcpy",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-scrcpy.showDevices",
+        "title": "Scrcpy: Refresh Devices",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vscode-scrcpy.setServer",
+        "title": "Scrcpy: Set Server URL",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "vscode-scrcpy.connectDevice",
+        "title": "Connect & View"
+      },
+      {
+        "command": "vscode-scrcpy.viewDevice",
+        "title": "View"
+      },
+      {
+        "command": "vscode-scrcpy.disconnectDevice",
+        "title": "Disconnect"
+      },
+      {
+        "command": "vscode-scrcpy.connectIP",
+        "title": "Scrcpy: Connect Device by IP",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "vscode-scrcpy.viewDeviceSidebar",
+        "title": "View in Sidebar"
+      },
+      {
+        "command": "vscode-scrcpy.startServer",
+        "title": "Scrcpy: Start Server",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vscode-scrcpy.stopServer",
+        "title": "Scrcpy: Stop Server",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vscode-scrcpy.showServerLog",
+        "title": "Scrcpy: Show Server Log",
+        "icon": "$(output)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "scrcpy-explorer",
+          "title": "Android Devices",
+          "icon": "media/phone.svg"
+        }
+      ]
+    },
+    "views": {
+      "scrcpy-explorer": [
+        {
+          "id": "scrcpyDevices",
+          "name": "Devices"
+        },
+        {
+          "id": "scrcpyPlayerView",
+          "type": "webview",
+          "name": "Player"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "vscode-scrcpy.showDevices",
+          "when": "view == scrcpyDevices",
+          "group": "navigation"
+        },
+        {
+          "command": "vscode-scrcpy.connectIP",
+          "when": "view == scrcpyDevices",
+          "group": "navigation"
+        },
+        {
+          "command": "vscode-scrcpy.setServer",
+          "when": "view == scrcpyDevices",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vscode-scrcpy.connectDevice",
+          "when": "viewItem == device_available",
+          "group": "inline"
+        },
+        {
+          "command": "vscode-scrcpy.viewDevice",
+          "when": "viewItem == device_connected",
+          "group": "inline"
+        },
+        {
+          "command": "vscode-scrcpy.disconnectDevice",
+          "when": "viewItem == device_connected"
+        },
+        {
+          "command": "vscode-scrcpy.viewDeviceSidebar",
+          "when": "viewItem == device_connected"
+        },
+        {
+          "command": "vscode-scrcpy.viewDeviceSidebar",
+          "when": "viewItem == device_available"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Web Scrcpy",
+      "properties": {}
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.15.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "ws": "^8.20.0"
+  }
+}

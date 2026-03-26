@@ -1,0 +1,21 @@
+# Build outputs
+out/
+*.vsix
+
+# Dependencies
+node_modules/
+
+# Bundled binaries (downloaded by CI)
+bin/
+
+# Test
+.vscode-test/
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

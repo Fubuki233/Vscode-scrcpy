@@ -1,0 +1,195 @@
+name: Build & Release VSIX
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      scrhub_version:
+        description: 'scrhub release tag (e.g. v1.0.0, or "latest")'
+        required: false
+        default: 'latest'
+      scrcpy_version:
+        description: 'scrcpy version (e.g. v3.3.4, or "latest")'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - platform: linux-x64
+            scrhub_asset: scrhub-*-linux-x86_64.tar.gz
+            scrhub_bin: scrhub
+            target_bin: web-scrcpy-linux-x64
+            adb_url: https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+            adb_src: platform-tools/adb
+            adb_target: adb-linux-x64
+          - platform: win32-x64
+            scrhub_asset: scrhub-*-windows-x86_64.zip
+            scrhub_bin: scrhub.exe
+            target_bin: web-scrcpy-win-x64.exe
+            adb_url: https://dl.google.com/android/repository/platform-tools-latest-windows.zip
+            adb_src: platform-tools/adb.exe
+            adb_target: adb.exe
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Resolve scrhub version
+        id: scrhub
+        run: |
+          INPUT_VER="${{ github.event.inputs.scrhub_version }}"
+          if [ -z "$INPUT_VER" ] || [ "$INPUT_VER" = "latest" ]; then
+            SCRHUB_TAG=$(curl -sL https://api.github.com/repos/Fubuki233/scrhub/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+          else
+            SCRHUB_TAG="$INPUT_VER"
+          fi
+          echo "tag=$SCRHUB_TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved scrhub version: $SCRHUB_TAG"
+
+      - name: Resolve scrcpy version
+        id: scrcpy
+        run: |
+          INPUT_VER="${{ github.event.inputs.scrcpy_version }}"
+          if [ -z "$INPUT_VER" ] || [ "$INPUT_VER" = "latest" ]; then
+            SCRCPY_VER=$(curl -sL https://api.github.com/repos/Genymobile/scrcpy/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+          else
+            SCRCPY_VER="$INPUT_VER"
+          fi
+          echo "version=$SCRCPY_VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved scrcpy version: $SCRCPY_VER"
+
+      - name: Download scrhub server binary
+        run: |
+          SCRHUB_TAG="${{ steps.scrhub.outputs.tag }}"
+          mkdir -p bin
+
+          # List release assets and find the matching one
+          ASSETS_JSON=$(curl -sL "https://api.github.com/repos/Fubuki233/scrhub/releases/tags/${SCRHUB_TAG}")
+          ASSET_URL=$(echo "$ASSETS_JSON" | grep -o '"browser_download_url": *"[^"]*${{ matrix.platform == 'linux-x64' && 'linux-x86_64' || 'windows-x86_64' }}[^"]*"' | sed 's/.*"\(http[^"]*\)".*/\1/' | head -1)
+
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: Could not find scrhub asset for ${{ matrix.platform }}"
+            echo "Available assets:"
+            echo "$ASSETS_JSON" | grep browser_download_url
+            exit 1
+          fi
+
+          echo "Downloading: $ASSET_URL"
+          curl -sL "$ASSET_URL" -o /tmp/scrhub-archive
+
+          # Extract
+          case "${{ matrix.platform }}" in
+            linux-x64)
+              cd /tmp && tar xzf scrhub-archive
+              cp /tmp/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
+              chmod +x "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
+              ;;
+            win32-x64)
+              cd /tmp && unzip -o scrhub-archive -d scrhub-extracted
+              cp /tmp/scrhub-extracted/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
+              ;;
+          esac
+
+          echo "Server binary: $(ls -lh "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}")"
+
+      - name: Download scrcpy-server
+        run: |
+          SCRCPY_VER="${{ steps.scrcpy.outputs.version }}"
+          curl -sL "https://github.com/Genymobile/scrcpy/releases/download/${SCRCPY_VER}/scrcpy-server-${SCRCPY_VER}" -o bin/scrcpy-server
+          echo "scrcpy-server: $(wc -c < bin/scrcpy-server) bytes"
+
+      - name: Download ADB
+        run: |
+          curl -sL "${{ matrix.adb_url }}" -o /tmp/pt.zip
+          unzip -q /tmp/pt.zip -d /tmp/pt
+          cp "/tmp/pt/${{ matrix.adb_src }}" "bin/${{ matrix.adb_target }}"
+          chmod +x "bin/${{ matrix.adb_target }}" 2>/dev/null || true
+          echo "ADB: $(ls -lh "bin/${{ matrix.adb_target }}")"
+
+      - name: List bin contents
+        run: ls -lh bin/
+
+      - name: Package VSIX
+        run: |
+          npx @vscode/vsce package --no-dependencies --target ${{ matrix.platform }} -o "vscode-scrcpy-${{ matrix.platform }}.vsix"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.platform }}
+          path: "*.vsix"
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Resolve versions
+        id: versions
+        run: |
+          SCRHUB_TAG=$(curl -sL https://api.github.com/repos/Fubuki233/scrhub/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+          SCRCPY_VER=$(curl -sL https://api.github.com/repos/Genymobile/scrcpy/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+          echo "scrhub=$SCRHUB_TAG" >> "$GITHUB_OUTPUT"
+          echo "scrcpy=$SCRCPY_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.vsix > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Vscode-scrcpy ${{ github.ref_name }}"
+          body: |
+            ## Vscode-scrcpy ${{ github.ref_name }}
+
+            VS Code extension for controlling Android devices. Bundles:
+            - **scrhub server**: ${{ steps.versions.outputs.scrhub }}
+            - **scrcpy-server**: ${{ steps.versions.outputs.scrcpy }}
+            - **ADB**: latest from Google platform-tools
+
+            ### Install
+            ```bash
+            code --install-extension vscode-scrcpy-linux-x64.vsix
+            # or for Windows
+            code --install-extension vscode-scrcpy-win32-x64.vsix
+            ```
+
+            ### Platforms
+            | Platform | File |
+            |----------|------|
+            | Linux x64 | `vscode-scrcpy-linux-x64.vsix` |
+            | Windows x64 | `vscode-scrcpy-win32-x64.vsix` |
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: false
