@@ -100,12 +100,13 @@ jobs:
           # Extract
           case "${{ matrix.platform }}" in
             linux-x64)
-              cd /tmp && tar xzf scrhub-archive
-              cp /tmp/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
+              mkdir -p /tmp/scrhub-extracted
+              tar xzf /tmp/scrhub-archive --no-same-owner -C /tmp/scrhub-extracted
+              cp /tmp/scrhub-extracted/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
               chmod +x "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
               ;;
             win32-x64)
-              cd /tmp && unzip -o scrhub-archive -d scrhub-extracted
+              unzip -o /tmp/scrhub-archive -d /tmp/scrhub-extracted
               cp /tmp/scrhub-extracted/${{ matrix.scrhub_bin }} "$GITHUB_WORKSPACE/bin/${{ matrix.target_bin }}"
               ;;
           esac
@@ -193,3 +194,30 @@ jobs:
             artifacts/*
           draft: false
           prerelease: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          npm install -g @vscode/vsce
+          for vsix in artifacts/*.vsix; do
+            echo "Publishing $vsix ..."
+            vsce publish --packagePath "$vsix"
+          done
