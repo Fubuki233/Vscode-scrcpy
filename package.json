@@ -3,7 +3,11 @@
   "displayName": "Web Scrcpy - Android Remote Control",
   "description": "Control Android devices directly in VS Code via web-scrcpy server",
   "version": "0.1.0",
-  "publisher": "web-scrcpy",
+  "publisher": "zyh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fubuki233/Vscode-scrcpy"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
