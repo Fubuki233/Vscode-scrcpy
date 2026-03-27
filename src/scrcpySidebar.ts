@@ -7,10 +7,14 @@ export class ScrcpySidebarProvider implements vscode.WebviewViewProvider {
     private view: vscode.WebviewView | undefined;
     private ws: WebSocket | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private connectTimeout: ReturnType<typeof setTimeout> | null = null;
     private reconnectDelay = 1000;
     private currentSerial: string | null = null;
+    private pendingLabel: string | null = null;
     private serverUrlFn: () => string;
     private webviewReady = false;
+    private generation = 0; // incremented on each showDevice to invalidate stale callbacks
+    private pendingMessages = 0; // track inflight postMessage calls for backpressure
 
     constructor(serverUrlFn: () => string) {
         this.serverUrlFn = serverUrlFn;
@@ -27,7 +31,14 @@ export class ScrcpySidebarProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
         };
 
-        webviewView.webview.html = this.getIdleHtml();
+        // If showDevice was called before the view was resolved, load player directly
+        if (this.currentSerial && this.pendingLabel !== null) {
+            webviewView.webview.html = this.getPlayerHtml();
+            this.view.title = `📱 ${this.pendingLabel}`;
+            this.pendingLabel = null;
+        } else {
+            webviewView.webview.html = this.getIdleHtml();
+        }
 
         webviewView.webview.onDidReceiveMessage(msg => {
             switch (msg.type) {
@@ -56,13 +67,17 @@ export class ScrcpySidebarProvider implements vscode.WebviewViewProvider {
         this.closeWs();
         this.currentSerial = serial;
         this.webviewReady = false;
+        this.reconnectDelay = 1000;
+        this.generation++; // invalidate any pending callbacks from previous session
 
         if (!this.view) {
-            // View not yet resolved — it will be when sidebar opens
+            // View not yet resolved — store pending info, resolveWebviewView will pick it up
+            this.pendingLabel = label;
             vscode.commands.executeCommand('scrcpyPlayerView.focus');
             return;
         }
 
+        this.pendingLabel = null;
         this.view.show?.(true);
         this.view.title = `📱 ${label}`;
         this.view.webview.html = this.getPlayerHtml();
@@ -74,8 +89,12 @@ export class ScrcpySidebarProvider implements vscode.WebviewViewProvider {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        if (this.connectTimeout) {
+            clearTimeout(this.connectTimeout);
+            this.connectTimeout = null;
+        }
         if (this.ws) {
-            try { this.ws.close(); } catch {}
+            try { this.ws.removeAllListeners(); this.ws.close(); } catch {}
             this.ws = null;
         }
     }
@@ -84,33 +103,60 @@ export class ScrcpySidebarProvider implements vscode.WebviewViewProvider {
         if (!this.view || !this.currentSerial) return;
         this.closeWs();
 
+        const gen = this.generation; // capture generation to detect stale callbacks
         const serverUrl = this.serverUrlFn();
         const proto = serverUrl.startsWith('https') ? 'wss' : 'ws';
         const host = serverUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
         const url = `${proto}://${host}/ws/device/${encodeURIComponent(this.currentSerial)}`;
 
-        this.ws = new WebSocket(url, { rejectUnauthorized: false });
+        const ws = new WebSocket(url, { rejectUnauthorized: false });
+        this.ws = ws;
 
-        this.ws.on('open', () => {
+        // Connection timeout: if WS stays in CONNECTING for too long, force close and retry
+        this.connectTimeout = setTimeout(() => {
+            this.connectTimeout = null;
+            if (gen !== this.generation) return;
+            if (ws.readyState === WebSocket.CONNECTING) {
+                try { ws.terminate(); } catch {}
+            }
+        }, 8000);
+
+        ws.on('open', () => {
+            if (this.connectTimeout) {
+                clearTimeout(this.connectTimeout);
+                this.connectTimeout = null;
+            }
+            if (gen !== this.generation) { try { ws.close(); } catch {} return; }
             this.reconnectDelay = 1000;
             this.view?.webview.postMessage({ type: 'ws_open' });
         });
 
-        this.ws.on('message', (data: Buffer) => {
-            if (!this.view) return;
+        ws.on('message', (data: Buffer) => {
+            if (gen !== this.generation || !this.view) return;
+            // Drop video frames if the webview message queue is backing up
+            const ch = data.length > 0 ? data[0] : 0;
+            if (ch === 0x01 && this.pendingMessages > 30) return; // 0x01 = video channel
+            this.pendingMessages++;
             const b64 = Buffer.isBuffer(data) ? data.toString('base64') : Buffer.from(data as ArrayBuffer).toString('base64');
-            this.view.webview.postMessage({ type: 'ws_data', data: b64 });
+            this.view.webview.postMessage({ type: 'ws_data', data: b64 }).then(
+                () => { this.pendingMessages = Math.max(0, this.pendingMessages - 1); },
+                () => { this.pendingMessages = Math.max(0, this.pendingMessages - 1); }
+            );
         });
 
-        this.ws.on('close', () => {
+        ws.on('close', () => {
+            if (gen !== this.generation) return; // stale session — don't reconnect
             this.view?.webview.postMessage({ type: 'ws_close' });
             if (this.view && this.currentSerial) {
-                this.reconnectTimer = setTimeout(() => this.connectWs(), this.reconnectDelay);
+                this.reconnectTimer = setTimeout(() => {
+                    if (gen !== this.generation) return;
+                    this.connectWs();
+                }, this.reconnectDelay);
                 this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 10000);
             }
         });
 
-        this.ws.on('error', () => {});
+        ws.on('error', () => {});
     }
 
     private getIdleHtml(): string {
@@ -350,7 +396,7 @@ body { background: #1e1e1e; color: #888; display: flex; align-items: center; jus
                 frame.close();
                 frameCount++;
             },
-            error: () => {}
+            error: (e) => { connText.textContent = 'Decode error: ' + e.message; }
         });
         decoder.configure({
             codec: codecString,
@@ -393,6 +439,7 @@ body { background: #1e1e1e; color: #888; display: flex; align-items: center; jus
         if (decoder.decodeQueueSize > 10) {
             rebuildDecoder();
             needKeyFrame = true;
+            sendMgmt({ type: 'request_keyframe' });
             return;
         }
         if (needKeyFrame && !isKey) return;
@@ -411,6 +458,9 @@ body { background: #1e1e1e; color: #888; display: flex; align-items: center; jus
         deviceW = w; deviceH = h;
         canvas.width = w; canvas.height = h;
         updateSize();
+        if (typeof window.VideoDecoder === 'undefined') {
+            connText.textContent = 'WebCodecs unavailable';
+        }
     }
 
     window.addEventListener('message', (event) => {
@@ -589,13 +639,16 @@ body { background: #1e1e1e; color: #888; display: flex; align-items: center; jus
         if (!deviceW || !deviceH) return;
         const wrapper = document.getElementById('canvas-wrapper');
         const rect = wrapper.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
         const aspect = deviceW / deviceH;
         let w, h;
         if (rect.width / rect.height > aspect) { h = rect.height; w = h * aspect; }
         else { w = rect.width; h = w / aspect; }
-        canvas.style.width = w + 'px';
-        canvas.style.height = h + 'px';
+        canvas.style.width = Math.max(1, w) + 'px';
+        canvas.style.height = Math.max(1, h) + 'px';
     }
+    // ResizeObserver reliably detects sidebar layout changes (window.resize often misses them)
+    new ResizeObserver(() => updateSize()).observe(document.getElementById('canvas-wrapper'));
     window.addEventListener('resize', updateSize);
 
     function updateControlBtn() {

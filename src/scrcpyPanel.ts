@@ -11,7 +11,9 @@ export class ScrcpyPanel {
     private disposed = false;
     private ws: WebSocket | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private connectTimeout: ReturnType<typeof setTimeout> | null = null;
     private reconnectDelay = 1000;
+    private pendingMessages = 0;
 
     public static createOrShow(extensionUri: vscode.Uri, serverUrl: string, serial: string, label: string, column?: vscode.ViewColumn) {
         const existing = ScrcpyPanel.currentPanels.get(serial);
@@ -75,34 +77,60 @@ export class ScrcpyPanel {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        if (this.connectTimeout) {
+            clearTimeout(this.connectTimeout);
+            this.connectTimeout = null;
+        }
         if (this.ws) {
-            try { this.ws.close(); } catch {}
+            try { this.ws.removeAllListeners(); this.ws.close(); } catch {}
             this.ws = null;
         }
     }
 
     private connectWs() {
         if (this.disposed) return;
+        this.closeWs();
 
         const proto = this.serverUrl.startsWith('https') ? 'wss' : 'ws';
         const host = this.serverUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
         const url = `${proto}://${host}/ws/device/${encodeURIComponent(this.serial)}`;
 
-        this.ws = new WebSocket(url, { rejectUnauthorized: false });
+        const ws = new WebSocket(url, { rejectUnauthorized: false });
+        this.ws = ws;
 
-        this.ws.on('open', () => {
+        // Connection timeout: force close if stuck in CONNECTING
+        this.connectTimeout = setTimeout(() => {
+            this.connectTimeout = null;
+            if (this.disposed) return;
+            if (ws.readyState === WebSocket.CONNECTING) {
+                try { ws.terminate(); } catch {}
+            }
+        }, 8000);
+
+        ws.on('open', () => {
+            if (this.connectTimeout) {
+                clearTimeout(this.connectTimeout);
+                this.connectTimeout = null;
+            }
+            if (this.disposed) { try { ws.close(); } catch {} return; }
             this.reconnectDelay = 1000;
             this.panel.webview.postMessage({ type: 'ws_open' });
         });
 
-        this.ws.on('message', (data: Buffer) => {
+        ws.on('message', (data: Buffer) => {
             if (this.disposed) return;
-            // Forward binary data to webview as base64
+            // Drop video frames if the webview message queue is backing up
+            const ch = data.length > 0 ? data[0] : 0;
+            if (ch === 0x01 && this.pendingMessages > 30) return; // 0x01 = video channel
+            this.pendingMessages++;
             const b64 = Buffer.isBuffer(data) ? data.toString('base64') : Buffer.from(data as ArrayBuffer).toString('base64');
-            this.panel.webview.postMessage({ type: 'ws_data', data: b64 });
+            this.panel.webview.postMessage({ type: 'ws_data', data: b64 }).then(
+                () => { this.pendingMessages = Math.max(0, this.pendingMessages - 1); },
+                () => { this.pendingMessages = Math.max(0, this.pendingMessages - 1); }
+            );
         });
 
-        this.ws.on('close', () => {
+        ws.on('close', () => {
             this.panel.webview.postMessage({ type: 'ws_close' });
             if (!this.disposed) {
                 this.reconnectTimer = setTimeout(() => this.connectWs(), this.reconnectDelay);
@@ -110,9 +138,7 @@ export class ScrcpyPanel {
             }
         });
 
-        this.ws.on('error', () => {
-            // error always followed by close
-        });
+        ws.on('error', () => {});
     }
 
     private getWebviewContent(): string {
@@ -446,6 +472,7 @@ export class ScrcpyPanel {
         if (decoder.decodeQueueSize > 10) {
             rebuildDecoder();
             needKeyFrame = true;
+            sendMgmt({ type: 'request_keyframe' });
             return;
         }
 
